@@ -1,6 +1,6 @@
 from machine import Pin, SPI
-from struct import unpack
 import time
+import _thread
 
 class Mode:
     RX = 0
@@ -81,11 +81,14 @@ class nRF24:
     # Constants
     mode_values = {Mode.RX: 0x0B, Mode.TX: 0x0A}
     PAYLOAD_BYTES = 5
+    ADDRESS_DATA_RXPIPE0 = [0xe1, 0xe1, 0xe1, 0xe1, 0xe1]
+    ADDRESS_DATA_TXPIPE0 = [0xe1, 0xe1, 0xe1, 0xe1, 0xe1]
 
     def __init__(self, mode, rf_channel):
 
         # Type checking
-        if type(mode) != Mode:
+        # if type(mode) != Mode: #TODO: import enum for micropython
+        if mode not in [0, 1]:
             raise ValueError("mode must be of type Mode")
 
         if type(rf_channel) != int:
@@ -107,42 +110,83 @@ class nRF24:
         self.write(nRF24.MEM_WRITE['EN_RXADDR'], 0x01)
         self.write(nRF24.MEM_WRITE['SETUP_AW'], 0x03)
         self.write(nRF24.MEM_WRITE['SETUP_AW'], 0x03)
-        self.write_buf(nRF24.MEM_WRITE['RX_ADDR_P0'], [0xe1, 0xe1, 0xe1, 0xe1, 0xe1])
-        self.write_buf(nRF24.MEM_WRITE['TX_ADDR'], [0xe1, 0xe1, 0xe1, 0xe1, 0xe1])
+        self.write_buf(nRF24.MEM_WRITE['RX_ADDR_P0'], nRF24.ADDRESS_DATA_RXPIPE0)
+        self.write_buf(nRF24.MEM_WRITE['TX_ADDR'], nRF24.ADDRESS_DATA_TXPIPE0)
         self.write(nRF24.MEM_WRITE['SETUP_RETR'], 0x00)
         self.write(nRF24.MEM_WRITE['RF_CH'], rf_channel)
         self.write(nRF24.MEM_WRITE['RF_SETUP'], 0x0f)
-        self.write(nRF.MEM_WRITE['RX_PW_P0'], nRF24.PAYLOAD_BYTES)
+        self.write(nRF24.MEM_WRITE['RX_PW_P0'], nRF24.PAYLOAD_BYTES)
         time.sleep_us(10)
 
-        self.write(nRF24.MEM_WRITE['CONFIG'], nRF24.mode_values[mode])
-        if mode == Mode.RX:
-            CE(1)
-        elif mode == Mode.TX:
-            CE(0)
-        time.sleep_us(10)
+        self.set_TX_RX(mode)
 
-        if (read(nRF24.MEM_READ['CONFIG']) & 0x08) != 0:
+        if (self.read(nRF24.MEM_READ['CONFIG']) & 0x08) != 0:
             print("nRF24 Successfully initiated! :D")
         else:
             print("nRF24 Failed to initiate! :(")
         time.sleep_us(100)
 
-    def read(self, address):
+    def set_TX_RX(self, mode):
         '''
-        nRF24 READ command followed by the argument address given
-        :return: the one byte data read
+        :param mode: 
+        '''
+        self.write(nRF24.MEM_WRITE['CONFIG'], nRF24.mode_values[mode])
+        if mode == Mode.RX:
+            self.CE(1)
+        elif mode == Mode.TX:
+            self.CE(0)
+        time.sleep_us(10)
+
+    def raw_read(self, buf_size: int, address) -> bytes:
+        '''
+        raw spi read
+        '''
+        try:
+            self.CSN(0)
+            rxdata = self.spi.read(buf_size, address)
+        finally:
+            self.CSN(1)
+
+        return rxdata
+
+    def read(self, address) -> int:
+        '''
+        :return: one byte data read after sending given address
         '''
         if address not in nRF24.MEM_READ.values() and address not in [nRF24.R_RX_PAYLOAD, nRF24.W_TX_PAYLOAD]:
             raise ValueError("Unknown Register!")
 
         try:
             self.CSN(0)
-            rxdata = self.spi.read(2, address)
+            self.spi.write(address.to_bytes(1, 'big'))
+            rxdata = self.spi.read(1, nRF24.NOP)
         finally:
             self.CSN(1)
 
-        return unpack('<H', rxdata)[0] >> 8
+        return int.from_bytes(rxdata, 'H')  # uncomment if int value is needed
+        # return rxdata  # uncomment if bytes value needed
+
+    def read_buf(self, address, buffer_size: int) -> bytes:
+        '''
+        Reads data list from buffer register 
+
+        :param buffer_size: is defaulted to PAYLOAD_BYTES constant
+
+        :return: <buffer_size> byte data read after sending given address
+        '''
+        if address not in nRF24.MEM_WRITE.values() and address not in [nRF24.W_TX_PAYLOAD, nRF24.R_RX_PAYLOAD]:
+            raise ValueError("Unknown Register to receive a buffer from!")
+
+        try:
+            self.CSN(0)
+            self.spi.write(address.to_bytes(1, 'big'))
+            rxdata = self.spi.read(buffer_size, nRF24.NOP)
+
+        finally:
+            self.CSN(1)
+
+        # return int.from_bytes(rxdata, 'H')
+        return rxdata
 
     def write(self, address, data):
         '''
@@ -167,7 +211,7 @@ class nRF24:
         finally:
             self.CSN(1)
 
-    def write_buf(self, address, data)
+    def write_buf(self, address, data):
         '''
 
         Writes data list to a buffer register
@@ -214,7 +258,7 @@ class nRF24:
         time.sleep(0.5)
         self.led.off()
 
-    def sendRF(self, buffer):
+    def sendRF(self, buffer): #TODO: make it sendRF_buf 
         '''
         sends buffer unsigned char[PAYLOAD_BYTES] to air where it should be picked by another nRF24 in the same channel
         '''
@@ -224,21 +268,65 @@ class nRF24:
         if len(buffer) > nRF24.PAYLOAD_BYTES:
             raise ValueError("buffer length should be less than nRF24.PAYLOAD_BYTES")
 
-        self.write(nRF24.MEM_WRITE['CONFIG'], nRF24.mode_values[Mode.TX])
-        self.write_buf(W_TX_PAYLOAD)
-        #TODO: continue here
+        # Just making sure it's in TX mode
+        #TODO: remove it after through testing
+        self.set_TX_RX(Mode.TX)
 
-    def readRF(self):
-        #TODO:
+        # Uploading data to be send through RF to buffer
+        self.write_buf(W_TX_PAYLOAD, buffer)
 
-    def rf_data_available(self):
-        #TODO:
+        # Sending Data
+        CE(1)
+        time.sleep_ms(1)
+        CE(0)
+
+    def receiveRF(self) -> bytes:
+        '''
+        Receiving buffer unsigned char[PAYLOAD_BYTES] from air from an nRF24 in the same channel that sent it
+        '''
+        buffer = self.read_buf(R_RX_PAYLOAD, nRF24.PAYLOAD_BYTES)
+
+        # Clearing and reseting STATUS bit
+        self.write(nRF24.MEM_WRITE('STATUS'), 0x70)  
+
+        self.flush_tx_rx()
+
+        return buffer
+
+    def rf_data_available(self) -> bool:
+        '''
+        returns whether there is received data in receive buffer
+        '''
+        return not ((self.read(nRF24.MEM_READ['STATUS']) & 0x40) == 0x40)
 
     def flush_tx_rx(self):
-        #TODO:
+        '''
+        empties the tx and rx buffers for new data receival
+        '''
+        self.write(nRF24.FLUSH_TX, 0)
+        time.sleep_ms(10) #TODO: test the necessity of this delay
+
+        self.write(nRF24.FLUSH_RX, 0)
+        time.sleep_ms(10) #TODO: test the necessity of this delay
+
+    def listen(self):
+        while True:
+            # if rf_data_available:  #TODO: test this later
+            while(self.rf_data_available()):
+                pass
+
+            print(self.receiveRF())
+
+            #TODO: test adding a delay here
+
+    def listen_core1(self):
+        '''
+        an infinite loop of constantly listening and printing rf data when available
+        '''
+        _thread.start_new_thread(self.listen, ())
 
     #TODO: implement a main receiver routine (while(data available) {receive})
    
 
 
-nrf = nRF24()
+nrf = nRF24(Mode.TX, 115)
