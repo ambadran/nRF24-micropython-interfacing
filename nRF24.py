@@ -205,6 +205,8 @@ class nRF24:
             complete_data_int = (address << 8) | data
             complete_data_bytes = complete_data_int.to_bytes(2, 'big')
 
+        #TODO: test type(data), must be one character
+
         try:
             self.CSN(0)
             self.spi.write(complete_data_bytes)
@@ -220,15 +222,28 @@ class nRF24:
         if address not in nRF24.MEM_WRITE.values() and address not in [nRF24.W_TX_PAYLOAD, nRF24.R_RX_PAYLOAD]:
             raise ValueError("Unknown Register to send a buffer to!")
 
-        if type(data) not in [list, tuple]:
-            raise ValueError("data should be of type list or tuple")
+        if type(data) in [list, tuple]: #TODO: must be list of characters
 
-        data.insert(0, address)
-        try:
-            self.CSN(0)
-            self.spi.write(bytes(data))
-        finally:
-            self.CSN(1)
+            data.insert(0, address)
+            try:
+                self.CSN(0)
+                self.spi.write(bytes(data))  #no need to cast if already correc
+            finally:
+                self.CSN(1)
+
+        elif type(data) == str:
+
+            txdata = bytearray([address])
+            txdata.extend(bytearray(data.encode()))
+            try:
+                self.CSN(0)
+                self.spi.write(txdata)  #no need to cast if already correc
+            finally:
+                self.CSN(1)
+
+
+        else:
+            raise ValueError("data should be of type list or tuple or str")
 
     def test_module(self):
         '''
@@ -262,9 +277,6 @@ class nRF24:
         '''
         sends buffer unsigned char[PAYLOAD_BYTES] to air where it should be picked by another nRF24 in the same channel
         '''
-        if type(buffer) != list:
-            raise ValueError("buffer should be a list of values")
-
         if len(buffer) > nRF24.PAYLOAD_BYTES:
             raise ValueError("buffer length should be less than nRF24.PAYLOAD_BYTES")
 
@@ -273,21 +285,21 @@ class nRF24:
         self.set_TX_RX(Mode.TX)
 
         # Uploading data to be send through RF to buffer
-        self.write_buf(W_TX_PAYLOAD, buffer)
+        self.write_buf(nRF24.W_TX_PAYLOAD, buffer)
 
         # Sending Data
-        CE(1)
+        self.CE(1)
         time.sleep_ms(1)
-        CE(0)
+        self.CE(0)
 
     def receiveRF(self) -> bytes:
         '''
         Receiving buffer unsigned char[PAYLOAD_BYTES] from air from an nRF24 in the same channel that sent it
         '''
-        buffer = self.read_buf(R_RX_PAYLOAD, nRF24.PAYLOAD_BYTES)
+        buffer = self.read_buf(nRF24.R_RX_PAYLOAD, nRF24.PAYLOAD_BYTES)
 
         # Clearing and reseting STATUS bit
-        self.write(nRF24.MEM_WRITE('STATUS'), 0x70)  
+        self.write(nRF24.MEM_WRITE['STATUS'], 0x70)  
 
         self.flush_tx_rx()
 
