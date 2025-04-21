@@ -29,8 +29,8 @@ class Station:
             self.SCK_PIN = const(18)
             self.MOSI_PIN = const(19)
             self.MISO_PIN = const(16)
-            self.CSN_PIN = const(21)
-            self.CE_PIN = const(20)
+            self.CSN_PIN = const(20)
+            self.CE_PIN = const(21)
 
         elif dev == 'zero':
             # raspberry pi zero pinout
@@ -53,9 +53,9 @@ class Station:
         self.nrf.open_rx_pipe(1, self.PIPES[1])
         self.nrf.start_listening()
         
-        self.state = state.RECEIVER
+        # self.state = state.RECEIVER
 
-        _thread.start_new_thread(self.keep_receiving, ())
+        # _thread.start_new_thread(self.keep_receiving, ())
 
     def receive(self) -> str:
         '''
@@ -83,8 +83,21 @@ class Station:
         sends enter
         '''
         self.state = state.TRANSMITTER
-        self.nrf.send_ascii(string)
+        sleep_ms(20)
+        self.nrf.send_ascii(string+'\n')
         self.state = state.RECEIVER
+
+    def forward(self, value: int):
+        self.send(f"Fi{value}")
+
+    def backward(self, value: int):
+        self.send(f"Bi{value}")
+
+    def right(self, value: int):
+        self.send(f"Ri{value}")
+        
+    def left(self, value: int):
+        self.send(f"Li{value}")
 
     def print_nrf_registers(self):
         '''

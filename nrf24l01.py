@@ -167,7 +167,7 @@ class NRF24L01:
 
     # power is one of POWER_x defines; speed is one of SPEED_x defines
     def set_power_speed(self, power, speed):
-        setup = self.reg_read(RF_SETUP) & 0b11010001
+        setup = self.reg_read(RF_SETUP) & 0b11010000 # when the LNA bit was 1, it created instability in sending to the stc controller
         self.reg_write(RF_SETUP, setup | power | speed)
 
     # length in bytes: 0, 1 or 2
@@ -304,12 +304,16 @@ class NRF24L01:
         for i in range(24):
             if i in [0x0a, 0x0b, 0x10]:
                 print(f"Register {hex(i)}: {self.reg_read(i, 5)}")
-            else:
+
+            elif i in [0x05]:
                 print(f"Register {hex(i)}: {self.reg_read(i)}")
+                
+            else:
+                print(f"Register {hex(i)}: {bin(self.reg_read(i))}")
             utime.sleep_ms(20)
 
-        print(f"Register 0x1C: {self.reg_read(0x1C)}")
+        print(f"Register 0x1C: {bin(self.reg_read(0x1C))}")
         utime.sleep_ms(20)
-        print(f"Register 0x1D: {self.reg_read(0x1D)}")
+        print(f"Register 0x1D: {bin(self.reg_read(0x1D))}")
         utime.sleep_ms(20)
 
